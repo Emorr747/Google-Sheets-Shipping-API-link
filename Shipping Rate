@@ -1,0 +1,200 @@
+function getUPSShippingRates() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Shipping Rate");
+  
+  if (!sheet) {
+    throw new Error("Sheet 'Shipping Rate' not found");
+  }
+  
+  try {
+    // UPS API credentials
+    var clientId = "Your Client ID Here"; <- Client ID
+    var clientSecret = "CLient Secret Here"; <- ClientSecret
+    
+    // Get OAuth 2.0 access token
+    var accessToken = getAccessToken(clientId, clientSecret);
+    
+    // Set headers
+    sheet.getRange("A1:H1").setValues([["Service", "Length", "Width", "Height", "Weight", "Origin Zip", "Dest Zip", "Rate"]]);
+    
+    // Get input data from the sheet
+    var length = sheet.getRange("B2").getValue();
+    var width = sheet.getRange("C2").getValue();
+    var height = sheet.getRange("D2").getValue();
+    var weight = sheet.getRange("E2").getValue();
+    var originZip = sheet.getRange("F2").getValue().toString();
+    var destZip = sheet.getRange("G2").getValue().toString();
+    
+    // Input validation
+    if (!length || !width || !height || !weight || !originZip || !destZip) {
+      throw new Error("All fields (except Service) must be filled");
+    }
+    
+    Logger.log("Input data: " + JSON.stringify({length, width, height, weight, originZip, destZip}));
+    
+    var services = sheet.getRange("A2:A8").getValues().filter(String);
+    
+    for (var i = 0; i < services.length; i++) {
+      var service = services[i][0];
+      var serviceCode = getServiceCode(service);
+      
+      if (serviceCode) {
+        var rate = calculateShippingRate(accessToken, serviceCode, length, width, height, weight, originZip, destZip);
+        sheet.getRange(2 + i, 8).setValue(parseFloat(rate));
+        Logger.log("Rate calculated for " + service + ": " + rate);
+      } else {
+        sheet.getRange(2 + i, 8).setValue("Invalid service");
+        Logger.log("Invalid service: " + service);
+      }
+    }
+  } catch (error) {
+    Logger.log("Error occurred: " + error.toString());
+    sheet.getRange("H2").setValue("Error: " + error.toString());
+  }
+}
+
+function getServiceCode(service) {
+  var serviceCodes = {
+    "UPS® Ground": "03",
+    "UPS 3 Day Select®": "12",
+    "UPS 2nd Day Air®": "02",
+    "UPS 2nd Day Air AM®": "59",
+    "UPS Next Day Air Saver®": "13",
+    "UPS Next Day Air®": "01",
+    "UPS Next Day Air® Early": "14"
+  };
+  
+  return serviceCodes[service];
+}
+
+function getAccessToken(clientId, clientSecret) {
+  var tokenUrl = "https://onlinetools.ups.com/security/v1/oauth/token";
+  var tokenPayload = {
+    "grant_type": "client_credentials"
+  };
+  var tokenOptions = {
+    "method": "post",
+    "contentType": "application/x-www-form-urlencoded",
+    "headers": {
+      "Authorization": "Basic " + Utilities.base64Encode(clientId + ":" + clientSecret)
+    },
+    "payload": tokenPayload
+  };
+  
+  var tokenResponse = UrlFetchApp.fetch(tokenUrl, tokenOptions);
+  var tokenData = JSON.parse(tokenResponse.getContentText());
+  var accessToken = tokenData.access_token;
+  
+  Logger.log("Access token obtained: " + accessToken);
+  
+  return accessToken;
+}
+
+function calculateShippingRate(accessToken, serviceCode, length, width, height, weight, originZip, destZip) {
+  var shipmentData = {
+    "RateRequest": {
+      "Request": {
+        "RequestOption": "Rate"
+      },
+      "Shipment": {
+        "Shipper": {
+          "Address": {
+            "PostalCode": originZip,
+            "CountryCode": "US"
+          },
+          "ShipperNumber": "Your Account Number Here" // Your account number
+        },
+        "ShipTo": {
+          "Address": {
+            "PostalCode": destZip,
+            "CountryCode": "US"
+          }
+        },
+        "ShipFrom": {
+          "Address": {
+            "PostalCode": originZip,
+            "CountryCode": "US"
+          }
+        },
+        "Service": {
+          "Code": serviceCode
+        },
+        "Package": {
+          "PackagingType": {
+            "Code": "02",
+            "Description": "Package"
+          },
+          "Dimensions": {
+            "UnitOfMeasurement": {
+              "Code": "IN",
+              "Description": "Inches"
+            },
+            "Length": length.toString(),
+            "Width": width.toString(),
+            "Height": height.toString()
+          },
+          "PackageWeight": {
+            "UnitOfMeasurement": {
+              "Code": "LBS",
+              "Description": "Pounds"
+            },
+            "Weight": weight.toString()
+          }
+        }
+      }
+    }
+  };
+  
+  Logger.log("Shipment data: " + JSON.stringify(shipmentData));
+  
+  var options = {
+    'method': 'post',
+    'contentType': 'application/json',
+    'headers': {
+      'Authorization': 'Bearer ' + accessToken
+    },
+    'payload': JSON.stringify(shipmentData),
+    'muteHttpExceptions': true
+  };
+  
+  var response = UrlFetchApp.fetch('https://onlinetools.ups.com/api/rating/v1/Rate', options);
+  var responseCode = response.getResponseCode();
+  var responseBody = response.getContentText();
+  
+  Logger.log("API response code: " + responseCode);
+  Logger.log("API response body: " + responseBody);
+  
+  if (responseCode !== 200) {
+    throw new Error("API request failed. Response code: " + responseCode + ". Response body: " + responseBody);
+  }
+  
+  var data = JSON.parse(responseBody);
+  
+  if (data && data.RateResponse && data.RateResponse.RatedShipment && data.RateResponse.RatedShipment.TotalCharges) {
+    var rate = data.RateResponse.RatedShipment.TotalCharges.MonetaryValue;
+    return rate;
+  } else {
+    throw new Error("Unable to extract rate from API response. Response: " + JSON.stringify(data));
+  }
+}
+
+function setupShippingServiceDropdown() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Shipping Rate");
+  
+  if (!sheet) {
+    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Shipping Rate");
+  }
+  
+  var services = [
+    "UPS® Ground",
+    "UPS 3 Day Select®",
+    "UPS 2nd Day Air®",
+    "UPS 2nd Day Air AM®",
+    "UPS Next Day Air Saver®",
+    "UPS Next Day Air®",
+    "UPS Next Day Air® Early"
+  ];
+  
+  var range = sheet.getRange("A2:A8");
+  var rule = SpreadsheetApp.newDataValidation().requireValueInList(services).build();
+  range.setDataValidation(rule);
+}
