@@ -1,0 +1,22 @@
+// For Dropdown Menu
+function setupShippingServiceDropdown() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Shipping Rate");
+  
+  if (!sheet) {
+    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Shipping Rate");
+  }
+  
+  var services = [
+    "UPS® Ground",
+    "UPS 3 Day Select®",
+    "UPS 2nd Day Air®",
+    "UPS 2nd Day Air AM®",
+    "UPS Next Day Air Saver®",
+    "UPS Next Day Air®",
+    "UPS Next Day Air® Early"
+  ];
+  
+  var range = sheet.getRange("A2:A8");
+  var rule = SpreadsheetApp.newDataValidation().requireValueInList(services).build();
+  range.setDataValidation(rule);
+}
